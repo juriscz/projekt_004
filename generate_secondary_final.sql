@@ -1,36 +1,38 @@
+-- 1) Smazat starou verzi
 DROP TABLE IF EXISTS t_jiri_nemec_project_sql_secondary_final;
 
+-- 2) Vytvořit sekundární tabulku
 CREATE TABLE t_jiri_nemec_project_sql_secondary_final AS
-WITH
--- 1. Společné roky z primární tabulky
-common_years AS (
-    SELECT DISTINCT year
-    FROM data_academy_content.t_jiri_nemec_project_sql_primary_final
+WITH eu_countries AS (
+  -- DISTINCT kvůli jistotě, kdyby countries obsahovaly duplicitní názvy
+  SELECT DISTINCT
+         c.country,          -- textový název země (v datasets Engeto bývá v tomto sloupci název)
+         c.continent
+  FROM data_academy_content.countries c
+  WHERE c.continent = 'Europe'
 ),
--- 2. Evropské státy (ze tabulky countries)
-european_countries AS (
-    SELECT country
-    FROM data_academy_content.countries
-    WHERE continent = 'Europe'
-),
--- 3. Ekonomická data (převzata z economies)
-economy_data AS (
-    SELECT 
-        e.country,
-        e.year,
-        ROUND(e.gdp::numeric, 2) AS gdp,
-        ROUND(e.gini::numeric, 2) AS gini,
-        e.population
-    FROM data_academy_content.economies e
+econ_dedup AS (
+  -- Kdyby economies náhodou měly více řádků pro tutéž dvojici (country, year),
+  -- sjednotíme je agregací. MAX je bezpečné pro shodné hodnoty; pokud by se lišily,
+  -- máš aspoň deterministický výsledek (můžeš nahradit AVG/SUM dle potřeby).
+  SELECT
+      e.country,
+      e.year,
+      MAX(e.gdp)        AS gdp,
+      MAX(NULLIF(e.gini,0)) AS gini,   -- 0 → NULL, pokud je v datasetu „nula“ místo chybějící hodnoty
+      MAX(e.population) AS population
+  FROM data_academy_content.economies e
+  GROUP BY e.country, e.year
 )
--- 4. Výstup: spojení podle názvu státu a roku
 SELECT
-    e.country AS country_name,
-    e.year,
-    e.gdp,
-    e.gini,
-    e.population
-FROM economy_data e
-JOIN european_countries c ON e.country = c.country
-JOIN common_years y ON e.year = y.year
-ORDER BY e.country, e.year;
+    ec.country        AS country_name,
+    ed.year,
+    ed.gdp::numeric       AS gdp,
+    ed.gini::numeric      AS gini,
+    ed.population::numeric AS population
+FROM eu_countries ec
+JOIN econ_dedup ed
+  ON ed.country = ec.country
+-- Pokud chceš omezit na stejné období jako primární tabulka:
+-- WHERE ed.year BETWEEN 2006 AND 2018
+ORDER BY country_name, year;
